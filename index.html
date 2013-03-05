@@ -35,7 +35,8 @@ function handleDrop(e) {
 			var ws = wb.Sheets[wb.Directory[0]] 
 			var csv = make_csv(ws);  
 			var cmds = get_formulae(ws).join("\n");
-			out.innerText+=csv+"\n";
+			if(out.innerText === undefined) out.textContent+=csv+"\n";
+			else out.innerText+=csv+"\n";
 
 		};
 		reader.readAsBinaryString(f);
