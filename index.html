@@ -9,13 +9,15 @@
 	font:20pt bold,"Vollkorn";color:#bbb
 }
 </style>
-<div id="drop">Drop an XLS or DOC file here to see sheet data.</div>
+<b>JS-XLS Live Demo</b><br />
+<a href="https://github.com/Niggler/js-xls">Github Repo</a><br />
+<a href="https://github.com/Niggler/js-xls/issues">Issues?  Something look weird?  Click here and report an issue</a><br />
+
+<div id="drop">Drop an XLS file here to see data in CSV.</div>
 <pre id="out"></pre>
 <br />
-<!--
-<script src="http://raw.github.com/Niggler/js-xls/master/xls.js"></script>
--->
 <script src="xls.js"></script>
+<script src="shim.js"></script>
 <script>
 if(!window.cfbs) window.cfbs = {};
 var drop = document.getElementById('drop');
@@ -48,8 +50,12 @@ function handleDragover(e) {
 	e.preventDefault();
 	e.dataTransfer.dropEffect = 'copy';
 }
-drop.addEventListener('dragover', handleDragover, false);
-drop.addEventListener('drop', handleDrop, false);
+
+if(drop.addEventListener) {
+	drop.addEventListener('dragenter', handleDragover, false);
+	drop.addEventListener('dragover', handleDragover, false);
+	drop.addEventListener('drop', handleDrop, false);
+}
 </script>
 <script type="text/javascript">
 	var _gaq = _gaq || [];
