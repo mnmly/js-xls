@@ -2307,7 +2307,8 @@ function stringify_formula(formula, range, cell, supbooks) {
 			case 'PtgNum': stack.push(String(f[1])); break;
 			/* 2.5.198.89 */
 			case 'PtgStr': stack.push('"' + f[1] + '"'); break;
-
+			/* 2.5.198.57 */
+			case 'PtgErr': console.error(f[1]); stack.push(f[1]); break;
 			/* 2.5.198.27 */
 			case 'PtgArea':
 				type = f[1][0], r = shift_range(f[1][1], range);
@@ -3212,6 +3213,7 @@ var FtabArgc = {
 	0x004F: 2, /* ABSREF */
 	0x0050: 2, /* RELREF */
 	0x0053: 1, /* TRANSPOSE */
+	0x0056: 1, /* TYPE */
 	0x005A: 1, /* DEREF */
 	0x0061: 2, /* ATAN2 */
 	0x0062: 1, /* ASIN */
@@ -3276,6 +3278,7 @@ var FtabArgc = {
 	0x00F4: 1, /* INFO */
 	0x00FC: 2, /* FREQUENCY */
 	0x0101: 1, /* EVALUATE */
+	0x0105: 1, /* ERROR.TYPE */
 	0x010F: 1, /* GAMMALN */
 	0x0111: 4, /* BINOMDIST */
 	0x0112: 2, /* CHIDIST */
@@ -3385,7 +3388,7 @@ var XLSXFutureFunctions = {
 	"_xlfn.CSCH": "CSCH",
 	"_xlfn.DAYS": "DAYS",
 	"_xlfn.DECIMAL": "DECIMAL",
-	"ECMA.CEILING": "ECMA.CEILING",
+	"_xlfn.ECMA.CEILING": "ECMA.CEILING",
 	"_xlfn.ERF.PRECISE": "ERF.PRECISE",
 	"_xlfn.ERFC.PRECISE": "ERFC.PRECISE",
 	"_xlfn.EXPON.DIST": "EXPON.DIST",
@@ -3423,7 +3426,7 @@ var XLSXFutureFunctions = {
 	"_xlfn.MODE.SNGL": "MODE.SNGL",
 	"_xlfn.MUNIT": "MUNIT",
 	"_xlfn.NEGBINOM.DIST": "NEGBINOM.DIST",
-	"NETWORKDAYS.INTL": "NETWORKDAYS.INTL",
+	"_xlfn.NETWORKDAYS.INTL": "NETWORKDAYS.INTL",
 	"_xlfn.NIGBINOM": "NIGBINOM",
 	"_xlfn.NORM.DIST": "NORM.DIST",
 	"_xlfn.NORM.INV": "NORM.INV",
@@ -3464,7 +3467,7 @@ var XLSXFutureFunctions = {
 	"_xlfn.VAR.S": "VAR.S",
 	"_xlfn.WEBSERVICE": "WEBSERVICE",
 	"_xlfn.WEIBULL.DIST": "WEIBULL.DIST",
-	"WORKDAY.INTL": "WORKDAY.INTL",
+	"_xlfn.WORKDAY.INTL": "WORKDAY.INTL",
 	"_xlfn.XOR": "XOR",
 	"_xlfn.Z.TEST": "Z.TEST",
 };
