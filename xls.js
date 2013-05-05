@@ -2193,6 +2193,16 @@ function parse_SharedParsedFormula(blob, length) {
 	return [rgce, rgcb];
 }
 
+/* 2.5.198.1 TODO */
+function parse_ArrayParsedFormula(blob, length, opts, ref) {
+	var target = blob.l + length;
+	var rgcb, cce = blob.read_shift(2); // length of rgce
+	if(cce == 0xFFFF) return [[],parsenoop(blob, length-2)];
+	var rgce = parse_Rgce(blob, cce);
+	if(length !== cce + 2) rgcb = parse_RgbExtra(blob, target - cce - 2, rgce);
+	return [rgce, rgcb];
+}
+
 /* 2.5.198.104 */
 function parse_Rgce(blob, length) {
 	var target = blob.l + length;
@@ -4036,10 +4046,11 @@ function parse_workbook(blob) {
 					}
 				} break;
 				case 'Formula': {
-					if(val.val === "String") {
-						last_formula = val;
+					switch(val.val) {
+						case 'String': last_formula = val; break;
+						case 'Array Formula': throw "Array Formula unsupported";
+						default: addline(val.cell, {v:val.val, f:stringify_formula(val.formula, range, val.cell, supbooks), ixfe: val.cell.ixfe, t:'n'}); // TODO: infer type from formula
 					}
-					else addline(val.cell, {v:val.val, f:stringify_formula(val.formula, range, val.cell, supbooks), ixfe: val.cell.ixfe, t:'n'}); // TODO: infer type from formula
 				} break;
 				case 'String': {
 					if(last_formula) {
@@ -4047,6 +4058,9 @@ function parse_workbook(blob) {
 						addline(last_formula.cell, {v:JSON.stringify(last_formula.val), f:stringify_formula(last_formula.formula, range, last_formula.cell, supbooks), ixfe: last_formula.cell.ixfe, t:'s'});
 						last_formula = null;
 					}
+				} break;
+				case 'Array': {
+					/* console.error(val); */
 				} break;
 				case 'ShrFmla': {
 					out[last_cell].f = stringify_formula(val[0], range, lastcell, supbooks);
@@ -4155,7 +4169,7 @@ function sheet_to_csv(sheet) {
 				var val = sheet[utils.encode_cell({c:C,r:R})];
 				if(!val) { row.push(""); continue; }
 				if(typeof val.v === 'boolean') val.v = val.v ? "TRUE" : "FALSE";
-				row.push(String(val.v).replace(/\\n/g,"\n").replace(/\\t/g,"\t").replace(/\\\\/g,"\\"));
+				row.push(String(val.v).replace(/\\n/g,"\n").replace(/\\t/g,"\t").replace(/\\\\/g,"\\").replace(/\\\"/g,"\"\""));
 			}
 			out += row.join(",") + "\n";
 		}
