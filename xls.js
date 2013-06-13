@@ -1,5 +1,7 @@
 /* vim: set ts=2: */
 /*jshint eqnull:true */
+var XLS = {};
+(function(XLS){
 /* Buffer.concat was added in the 0.8 series, so this is for older versions */
 if(typeof Buffer !== "undefined" && !Buffer.concat)
 Buffer.concat = function(list, length) {
@@ -493,16 +495,17 @@ function parse_FILETIME(blob) {
 }
 
 /* [MS-OSHARED] 2.3.3.1.4 Lpstr */
-function parse_lpstr(blob) {
+function parse_lpstr(blob, type, pad) {
 	var read = ReadShift.bind(blob), chk = CheckField.bind(blob);
 	var str = read('lpstr');
+	if(pad) blob.l += (4 - ((str.length+1) % 4)) % 4;
 	return str;
 }
 
 /* [MS-OSHARED] 2.3.3.1.11 VtString */
 function parse_VtString(blob, stringType) {
 	if(stringType) switch(stringType) {
-		case VT_LPSTR: return parse_lpstr(blob);
+		case VT_LPSTR: return parse_lpstr(blob, stringType, 4);
 		case VT_LPWSTR: return parse_lpwstr(blob);
 		default: throw "Unrecognized string type " + stringType;
 	}
@@ -541,8 +544,29 @@ function parse_dictionary(blob,CodePage) {
 function parse_BLOB(blob) {
 	var size = blob.read_shift(4);
 	var bytes = blob.slice(blob.l,blob.l+size);
-	if(blob.l % 4) blob.l = (blob.l>>2+1)<<2;
+	if(blob.l % 4) blob.l += (4 - (blob.l % 4)) % 4;
 	return bytes;
+}
+
+/* [MS-OLEPS] 2.11 ClipboardData */
+function parse_ClipboardData(blob) {
+	// TODO
+	var o = {};
+	o.Size = blob.read_shift(4);
+	//o.Format = blob.read_shift(4);
+	blob.l += o.Size;
+	return o;
+}
+
+/* [MS-OLEPS] 2.14 Vector and Array Property Types */
+function parse_VtVector(blob, cb) {
+	/* [MS-OLEPS] 2.14.2 VectorHeader */
+	var Length = blob.read_shift(4);
+	var o = [];
+	for(var i = 0; i != Length; ++i) {
+		o.push(cb(blob));
+	}
+	return o;	
 }
 
 /* [MS-OLEPS] 2.15 TypedPropertyValue */
@@ -550,17 +574,31 @@ function parse_TypedPropertyValue(blob, type) {
 	var read = ReadShift.bind(blob), chk = CheckField.bind(blob);
 	var t = read(2), ret;
 	read(2);
+	if(type !== VT_VARIANT)
 	if(t !== type && VT_CUSTOM.indexOf(type)===-1) throw 'Expected type ' + type + ' saw ' + t;
-	switch(type) {
+	switch(type === VT_VARIANT ? t : type) {
 		case VT_I2: ret = read(2, 'i'); read(2); return ret;
 		case VT_I4: ret = read(4, 'i'); return ret;
-		case VT_LPSTR: return parse_lpstr(blob, t).replace(/\u0000/g,'');
-		case VT_STRING: return parse_VtString(blob, t).replace(/\u0000/g,'');
 		case VT_BOOL: return read(4) !== 0x0;
+		case VT_LPSTR: return parse_lpstr(blob, t).replace(/\u0000/g,'');
 		case VT_FILETIME: return parse_FILETIME(blob);
+		case VT_CF: return parse_ClipboardData(blob);
+		case VT_STRING: return parse_VtString(blob, t).replace(/\u0000/g,'');
+		case VT_VECTOR | VT_VARIANT: return parse_VTVectorVariant(blob);
 		case VT_VECTOR | VT_LPSTR: return parse_VtVecUnalignedLpstrValue(blob);
-		case VT_VECTOR | VT_VARIANT: return parse_VtVecHeadingPairValue(blob);
+		default: throw "TypedPropertyValue unrecognized type " + type;
 	}
+}
+function parse_VTVectorVariant(blob) {
+	/* [MS-OLEPS] 2.14.2 VectorHeader */
+	var Length = blob.read_shift(4);
+
+	if(Length % 2 !== 0) throw new Error("VectorHeader Length=" + Length + " must be even");
+	var o = [];
+	for(var i = 0; i != Length; ++i) {
+		o.push(parse_TypedPropertyValue(blob, VT_VARIANT));
+	}
+	return o;
 }
 
 /* [MS-OLEPS] 2.20 PropertySet */
@@ -579,10 +617,34 @@ function parse_PropertySet(blob, PIDSI) {
 	}
 	var PropH = {};
 	for(i = 0; i != NumProps; ++i) {
-		if(blob.l !== Props[i][1]) throw "Read Error: Expected address " + Props[i][1] + ' at ' + blob.l + ' :' + i;
+		if(blob.l !== Props[i][1]) throw new Error("Read Error: Expected address " + Props[i][1] + ' at ' + blob.l + ' :' + i);
 		if(PIDSI) {
 			var piddsi = PIDSI[Props[i][0]];
 			PropH[piddsi.n] = parse_TypedPropertyValue(blob, piddsi.t);
+			if(piddsi.n == "CodePage") switch(PropH[piddsi.n]) {
+				/* TODO: Generate files under every codepage */
+				case 10000: break; // OSX Roman
+				case 1252: break; // Windows Latin
+
+				case 874: // SB Windows Thai
+				case 1250: // SB Windows Central Europe
+				case 1251: // SB Windows Cyrillic
+				case 1254: // SB Windows Turkish
+				case 1255: // SB Windows Hebrew
+				case 1256: // SB Windows Arabic
+
+				case 932: // DB Windows Japanese Shift-JIS
+				case 936: // DB Windows Simplified Chinese GBK
+				case 949: // DB Windows Korean
+				case 950: // DB Windows Traditional Chinese Big5
+
+				case 1200: // UTF16LE
+				case 1201: // UTF16BE
+				case 65000: // UTF-7
+				case 65001: // UTF-7
+
+				default: throw "Unsupported CodePage: " + PropH[piddsi.n];
+			}
 		} else {
 			if(Props[i][0] === 0x1) {
 				CodePage = PropH.CodePage = parse_TypedPropertyValue(blob, VT_I2);
@@ -600,7 +662,7 @@ function parse_PropertySet(blob, PIDSI) {
 				var val;
 				switch(blob[blob.l]) {
 					//TODO
-					case 0x41: val = parse_BLOB(blob); break;
+					case VT_BLOB: blob.l += 4; val = parse_BLOB(blob); break;
 				}
 				PropH[name] = val;
 			}
@@ -643,7 +705,7 @@ function parse_PropertySetStream(file, PIDSI) {
 }
 /* [MS-CFB] v20120705 */
 var CFB = (function(){
-
+var exports = {};
 function parse(file) {
 
 
@@ -877,15 +939,16 @@ function readSync(blob, options) {
 	var o = options || {};
 	switch((o.type || "base64")) {
 		case "file": return readFileSync(blob);
-		case "base64": blob = Base64.decode(blob); break;
+		case "base64": blob = Base64.decode(blob);
+		/* falls through */
 		case "binary": blob = s2a(blob); break;
 	}
 	return parse(blob);
 }
 
-this.read = readSync;
-this.parse = parse;
-return this;
+exports.read = readSync;
+exports.parse = parse;
+return exports;
 })();
 
 /** CFB Constants */
@@ -910,10 +973,10 @@ if(typeof require !== 'undefined' && typeof exports !== 'undefined') {
 		return Buffer.concat(this[0]);
 	};
 	var fs = require('fs');
-	exports.read = CFB.read;
-	exports.parse = CFB.parse;
-	exports.ReadShift = ReadShift;
-	exports.prep_blob = prep_blob;
+	//exports.read = CFB.read;
+	//exports.parse = CFB.parse;
+	//exports.ReadShift = ReadShift;
+	//exports.prep_blob = prep_blob;
 	exports.main = function(args) {
 		var cfb = CFB.read(args[0], {type:'file'});
 		console.log(cfb);
@@ -980,15 +1043,15 @@ function parse_ShortXLUnicodeString(blob) {
 function parse_XLUnicodeRichExtendedString(blob) {
 	var read_shift = blob.read_shift.bind(blob);
 	var cch = read_shift(2), flags = read_shift(1);
-	var width = 1 + (flags & 0x1);
-	// fRichSt
-	if(flags & 0x08) {
-		// TODO: cRun
-		// TODO: cbExtRst
-		read_shift(6);
-	}
+	var fHighByte = flags & 0x1, fExtSt = flags & 0x4, fRichSt = flags & 0x8;
+	var width = 1 + (flags & 0x1); // 0x0 -> utf8, 0x1 -> dbcs
+	var cRun, cbExtRst;
+	if(fRichSt) cRun = read_shift(2);
+	if(fExtSt) cbExtRst = read_shift(4);
 	var encoding = (flags & 0x1) ? 'dbcs' : 'utf8';
-	var msg = read_shift(encoding, cch);
+	var msg = cch == 0 ? "" : read_shift(encoding, cch);
+	if(fRichSt) blob.l += 4 * cRun; //TODO: parse this
+	if(fExtSt) blob.l += cbExtRst; //TODO: parse this
 	return msg;
 }
 
@@ -1181,7 +1244,7 @@ function parse_ForceFullCalculation(blob, length) {
 	var header = parse_frtHeader(blob);
 	if(header.type != 0x08A3) throw "Invalid Future Record " + header.type;
 	var fullcalc = blob.read_shift(4);
-	return { FullCalc: fullcalc };
+	return fullcalc !== 0x0;
 }
 
 
@@ -1268,8 +1331,8 @@ var parse_XF = parsenoop;
 function parse_Guts(blob, length) {
 	blob.l += 4;
 	var out = [blob.read_shift(2), blob.read_shift(2)];
-	if(out[0] != 0) out[0]--;
-	if(out[1] != 0) out[1]--;
+	if(out[0] !== 0) out[0]--;
+	if(out[1] !== 0) out[1]--;
 	if(out[0] > 7 || out[1] > 7) throw "Bad Gutters: " + out;
 	return out;
 }
@@ -1367,6 +1430,14 @@ function parse_Array(blob, length, opts) {
 	var ref = parse_Ref(blob, 6);
 	blob.l += 6; length -= 12; /* TODO: fAlwaysCalc */
 	return [ref, parse_ArrayParsedFormula(blob, length, opts, ref)];
+}
+
+/* 2.4.173 */
+function parse_MTRSettings(blob, length) {
+	var fMTREnabled = blob.read_shift(4) !== 0x00;
+	var fUserSetThreadCount = blob.read_shift(4) !== 0x00;
+	var cUserThreadCount = blob.read_shift(4);
+	return [fMTREnabled, fUserSetThreadCount, cUserThreadCount];
 }
 
 var parse_Backup = parsebool; /* 2.4.14 */
@@ -1540,7 +1611,7 @@ var parse_DConBin = parsenoop;
 var parse_TxO = parsenoop;
 var parse_HLink = parsenoop;
 var parse_Lel = parsenoop;
-var parse_CodeName = parsenoop;
+var parse_CodeName = parse_XLUnicodeString;
 var parse_SXFDBType = parsenoop;
 var parse_ObNoMacros = parsenoop;
 var parse_Dv = parsenoop;
@@ -1623,7 +1694,6 @@ var parse_Theme = parsenoop;
 var parse_GUIDTypeLib = parsenoop;
 var parse_FnGrp12 = parsenoop;
 var parse_NameFnGrp12 = parsenoop;
-var parse_MTRSettings = parsenoop;
 var parse_HeaderFooter = parsenoop;
 var parse_CrtLayout12 = parsenoop;
 var parse_CrtMlFrt = parsenoop;
@@ -2250,12 +2320,12 @@ function parse_Rgce(blob, length) {
 		else { ptgs.push([R.n, R.f(blob, length)]); }
 	}
 	return ptgs;
-};
+}
 
 /* 2.2.2 + Magic TODO */
 function stringify_formula(formula, range, cell, supbooks) {
 	range = range || {s:{c:0, r:0}};
-	var stack = [], e1, e2, type, c, ixti;
+	var stack = [], e1, e2, type, c, ixti, nameidx;
 	if(!formula[0] || !formula[0][0]) return "";
 	//console.log("--",formula[0])
 	formula[0].forEach(function(f) {
@@ -2413,7 +2483,7 @@ function stringify_formula(formula, range, cell, supbooks) {
 			/* 2.5.97.60 TODO: do something different for revisions */
 			case 'PtgName':
 				/* f[1] = type, 0, nameindex */
-				var nameidx = f[1][2];
+				nameidx = f[1][2];
 				var lbl = supbooks[0][nameidx];
 				var name = lbl.Name;
 				if(name in XLSXFutureFunctions) name = XLSXFutureFunctions[name];
@@ -2423,7 +2493,7 @@ function stringify_formula(formula, range, cell, supbooks) {
 			/* 2.5.97.61 TODO: do something different for revisions */
 			case 'PtgNameX':
 				/* f[1] = type, ixti, nameindex */
-				var bookidx = f[1][1], nameidx = f[1][2];
+				var bookidx = f[1][1]; nameidx = f[1][2];
 				var externbook = supbooks[bookidx+1][nameidx];
 				stack.push(externbook.body);
 				break;
@@ -2438,7 +2508,7 @@ function stringify_formula(formula, range, cell, supbooks) {
 		/* */
 			/* 2.5.198.58 TODO */
 			case 'PtgExp':
-				var c = {c:f[1][1],r:f[1][0]};
+				c = {c:f[1][1],r:f[1][0]};
 				if(supbooks.sharedf[encode_cell(c)]) {
 					var parsedf = (supbooks.sharedf[encode_cell(c)]);
 					var q = {c: cell.c, r:cell.r};
@@ -3850,7 +3920,7 @@ var RecordEnum = {
 	0x0897: { n:"GUIDTypeLib", f:parse_GUIDTypeLib },
 	0x0898: { n:"FnGrp12", f:parse_FnGrp12 },
 	0x0899: { n:"NameFnGrp12", f:parse_NameFnGrp12 },
-	0x089a: { n:"MTRSettings", f:parse_MTRSettings },
+	0x089a: { n:"MTRSettings", f:parse_MTRSettings, r:12 },
 	0x089c: { n:"HeaderFooter", f:parse_HeaderFooter },
 	0x089d: { n:"CrtLayout12", f:parse_CrtLayout12 },
 	0x089e: { n:"CrtMlFrt", f:parse_CrtMlFrt },
@@ -3967,7 +4037,7 @@ function slurp(R, blob, length, opts) {
 	var next = (RecordEnum[blob.readUInt16LE(blob.l)]);
 	while(next && next.n === 'Continue') {
 		l = blob.readUInt16LE(blob.l+2);
-		bufs.push(blob.slice(blob.l+4,blob.l+4+l));
+		bufs.push(blob.slice(blob.l+5,blob.l+4+l));
 		blob.l += 4+l;
 		next = (RecordEnum[blob.readUInt16LE(blob.l)]);
 	}
@@ -4025,33 +4095,103 @@ function parse_workbook(blob) {
 			}
 			//console.error(R,blob.l,length,blob.length);
 			var val;
-			if(blob.l+length+2 >= blob.length) val = R.f(blob, length);
-			else {
-				var next = (RecordEnum[blob.readUInt16LE(blob.l+length)]);
-				if(next && next.n === 'Continue') {
-					val = slurp(R, blob, length, opts);
-				} else {
-					if(opts.enc) { parsenoop(blob, length); continue; }
-					val = R.f(blob, length, opts);
-				}
-			}
+			if(R.n === 'EOF') val = R.f(blob, length);
+			else val = slurp(R, blob, length, opts);
 			switch(R.n) {
 				/* Workbook Options */
 				case 'Date1904': wb.opts.Date1904 = val; break;
 				case 'WriteProtect': wb.opts.WriteProtect = true; break;
 				case 'FilePass': opts.enc = val; console.error("File is password-protected -- Cannot extract files (yet)"); break;
 				case 'WriteAccess': opts.lastuser = val; break;
+				case 'FileSharing': break; //TODO
 				case 'CodePage': opts.codepage = val; break;
 				case 'RRTabId': opts.rrtabid = val; break;
 				case 'WinProtect': opts.winlocked = val; break;
+				case 'Template': break; // TODO
+				case 'RefreshAll': wb.opts.RefreshAll = val; break;
+				case 'BookBool': break; // TODO
+				case 'UsesELFs': if(val) throw "Unsupported ELFs"; break;
+				case 'MTRSettings': {
+					if(val[0] && val[1]) throw "Unsupported threads: " + val;
+				} break; // TODO: actually support threads
+				case 'CalcCount': wb.opts.CalcCount = val; break;
+				case 'CalcDelta': wb.opts.CalcDelta = val; break;
+				case 'CalcIter': wb.opts.CalcIter = val; break;
+				case 'CalcMode': wb.opts.CalcMode = val; break;
+				case 'CalcPrecision': wb.opts.CalcPrecision = val; break;
+				case 'CalcSaveRecalc': wb.opts.CalcSaveRecalc = val; break;
+				case 'CalcRefMode': opts.CalcRefMode = val; break; // TODO: implement R1C1
+				case 'Uncalced': break;
+				case 'ForceFullCalculation': wb.opts.FullCalc = val; break;
+				case 'WsBool': break; // TODO
+
+				case 'Header': break; // TODO
+				case 'Footer': break; // TODO
+				case 'HCenter': break; // TODO
+				case 'VCenter': break; // TODO
+				case 'Pls': break; // TODO
+				case 'Setup': break; // TODO
+				case 'DefColWidth': break; // TODO
+				case 'ColInfo': break; // TODO
+				case 'Row': break; // TODO
+				case 'DBCell': break; // TODO
+				case 'MulBlank': break; // TODO
+				case 'EntExU2': break; // TODO
+				case 'SxView': break; // TODO
+				case 'Sxvd': break; // TODO
+				case 'SXVI': break; // TODO
+				case 'SXVDEx': break; // TODO
+				case 'SxIvd': break; // TODO
+				case 'SXDI': break; // TODO
+				case 'SXLI': break; // TODO
+				case 'SXEx': break; // TODO
+				case 'QsiSXTag': break; // TODO
+				case 'Selection': break;
+				case 'Feat': break;
+				case 'FeatHdr': break;
+				case 'Blank': break;
+
+				case 'Country': break; // TODO: international support
+				case 'RecalcId': break;
+
+				case 'DefaultRowHeight': case 'DxGCol': break; // TODO: htmlify
+				case 'Fbi': case 'Fbi2': case 'GelFrame': break;
+				case 'Font': break; // TODO
+				case 'XF': break; // TODO
+				case 'XFCRC': break; // TODO
+				case 'XFExt': break; // TODO
+				case 'Style': break; // TODO
+				case 'StyleExt': break; // TODO
+				case 'TableStyles': break; // TODO
+				case 'Palette': break; // TODO
+				case 'ClrtClient': break; // TODO
+				case 'Theme': break; // TODO
+
+				case 'ExtSST': break; // TODO
+				case 'BookExt': break; // TODO
+
+				/* PivotTable */
+				case 'SXStreamID': break; // TODO
+				case 'SXVS': break; // TODO
+				case 'DConRef': break; // TODO
+				case 'SXAddl': break; // TODO
+
+				/* Print Settings */
+				case 'PrintRowCol': break;
+				case 'PrintGrid': break;
+				case 'PrintSize': break;
 
 				case 'SupBook': supbooks[++sbc] = [val]; sbci = 0; break;
 				case 'ExternName': supbooks[sbc][++sbci] = val; break;
+				case 'XCT': break;
+				case 'CRN': break;
+
+				case 'Index': break; // TODO
 				case 'Lbl': supbooks[0][++sbcli] = val; break;
 				case 'ExternSheet': supbooks[sbc] = supbooks[sbc].concat(val); sbci += val.length; break;
 
 				case 'Protect': out["!protect"] = val; break; /* for sheet or book */
-				case 'Password': if(val !== 0) throw "Password protection unsupported";
+				case 'Password': if(val !== 0) throw "Password protection unsupported"; break;
 				case 'Prot4Rev': case 'Prot4RevPass': break; /*TODO: Revision Control*/
 
 				case 'BoundSheet8': {
@@ -4126,6 +4266,107 @@ function parse_workbook(blob) {
 				case 'Scl': {
 					//console.log("Zoom Level:", val[0]/val[1],val);
 				} break;
+				case 'SheetExt': {
+
+				} break;
+				case 'SheetExtOptional': {
+
+				} break;
+
+				/* VBA */
+				case 'ObNoMacros': {
+
+				} break;
+				case 'ObProj': {
+					
+				} break;
+				case 'CodeName': {
+
+				} break;
+				case 'GUIDTypeLib': {
+
+				} break;
+				case 'Note': break;
+
+				case 'MergeCells': break;
+
+				case 'WOpt': break; // TODO: WTF?
+				case 'HLink': case 'HLinkTooltip': break;
+
+				case 'PhoneticInfo': break;
+
+				case 'OleObjectSize': break;
+
+				case 'TxO': break;
+
+				/* Differential Formatting */
+				case 'DXF': case 'DXFN': case 'DXFN12': case 'DXFN12List': case 'DXFN12NoCB': break;
+
+				/* Data Validation */
+				case 'Dv': case 'DVal': break;
+
+				/* Data Series */
+				case 'BRAI': case 'Series': case 'SeriesText': break;
+
+				/* Chart */
+				case 'Begin': case 'End':
+				case 'StartBlock': case 'EndBlock':
+				case 'Frame': case 'Area':
+				case 'Axis': case 'AxisLine': case 'Tick': break;
+				case 'AxesUsed':
+				case 'CrtLayout12': case 'CrtLayout12A': case 'CrtLink': case 'CrtLine': case 'CrtMlFrt': break;
+				case 'LineFormat': case 'AreaFormat':
+				case 'Chart': case 'Chart3d': case 'Chart3DBarShape': case 'ChartFormat': case 'ChartFrtInfo': break;
+				case 'PlotArea': case 'PlotGrowth': break;
+				case 'SeriesList': break;
+				case 'DataFormat': case 'SerToCrt': case 'FontX': break;
+				case 'CatSerRange': case 'AxcExt': case 'SerFmt': break;
+				case 'ShtProps': break;
+				case 'DefaultText': case 'Text': case 'Label': case 'CatLab': break;
+				case 'DataLabExtContents': break;
+				case 'Legend': case 'LegendException': break;
+				case 'Pie': case 'Scatter': break;
+				case 'PieFormat': case 'MarkerFormat': break;
+				case 'StartObject': case 'EndObject': break;
+				case 'AlRuns': case 'ObjectLink': break;
+				case 'SIIndex': break;
+				/* Axis Group */
+				case 'AxisParent': break;
+				case 'Pos': break;
+				case 'ValueRange': break;
+				/* Pivot Chart */
+				case 'SXViewEx9': break; // TODO
+				case 'SXViewLink': break;
+				case 'PivotChartBits': break;
+				case 'SBaseRef': break;
+				case 'TextPropsStream': break;
+
+				/* Filter */
+				case 'FilterMode': break;
+				case 'AutoFilter': case 'AutoFilterInfo': break;
+				case 'DropDownObjIds': break;
+				case 'Sort': break;
+
+				/* Drawing */
+				case 'ShapePropsStream': break;
+				case 'MsoDrawing': case 'MsoDrawingGroup': case 'MsoDrawingSelection': break;
+				case 'Obj': break;
+				/* Explicitly Ignored */
+				case 'Excel9File': break;
+				case 'Units': break;
+				case 'InterfaceHdr': case 'Mms': case 'InterfaceEnd': case 'DSF': case 'BuiltInFnGroupCount':
+				/* View Stuff */
+				case 'Window1': case 'Window2': case 'HideObj': case 'GridSet': case 'Guts':
+				case 'UserBView': case 'UserSViewBegin':
+				case 'Pane':
+				/* Print Stuff */
+				case 'RightMargin': case 'LeftMargin': case 'TopMargin': case 'BottomMargin':
+				case 'HeaderFooter': case 'HFPicture': case 'PLV':
+				case 'HorizontalPageBreaks': case 'VerticalPageBreaks':
+				/* Behavioral */
+				case 'Backup': case 'CompressPictures': case 'Compat12': break;
+				/* Uncomment next line in development */
+				default: throw 'Unrecognized Record ' + R.n;
 			}
 			lst.push([R.n, s, val]);
 			continue;
@@ -4302,11 +4543,12 @@ function shift_range(cell, range) {
 	return cell;
 }
 
-if(typeof exports !== 'undefined') {
-	exports.read = xlsread;
-	exports.readFile = readFile;
-	exports.utils = utils;
-	if(typeof module !== 'undefined' && require.main === module ) {
+XLS.parse_xlscfb = parse_xlscfb;
+XLS.read = xlsread;
+XLS.readFile = readFile;
+XLS.utils = utils;
+XLS.CFB = CFB;
+if(typeof module !== 'undefined' && require.main === module ) {
 		var wb = readFile(process.argv[2] || 'Book1.xls');
 		var target_sheet = process.argv[3] || '';
 		if(target_sheet === '') target_sheet = wb.Directory[0];
@@ -4314,6 +4556,5 @@ if(typeof exports !== 'undefined') {
 		console.log(target_sheet);
 		console.log(make_csv(ws));
 		//console.log(get_formulae(ws));
-	}
 }
-
+})(typeof exports !== 'undefined' ? exports : XLS);
