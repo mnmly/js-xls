@@ -1025,7 +1025,7 @@ var parse_Boolean = parsebool;
 /* [MS-XLS] 2.5.10 Bes (boolean or error) */
 function parse_Bes(blob) {
 	var v = blob.read_shift(1), t = blob.read_shift(1);
-	return t === 0x01 ? BERR[v] : v === 0x01; 
+	return t === 0x01 ? BERR[v] : v === 0x01;
 }
 
 /* [MS-XLS] 2.5.240 ShortXLUnicodeString */
@@ -4085,7 +4085,8 @@ function parse_workbook(blob) {
 	while(blob.l < blob.length) {
 		var s = blob.l;
 		var RecordType = read(2);
-		var length = read(2), y;
+		/* In an effort to save two bytes, implied zero length for EOF */
+		var length = (blob.l === blob.length ? 0 : read(2)), y;
 		var R = RecordEnum[RecordType];
 		if(R && R.f) {
 			if(R.r === 2 || R.r == 12) {
@@ -4549,12 +4550,12 @@ XLS.readFile = readFile;
 XLS.utils = utils;
 XLS.CFB = CFB;
 if(typeof module !== 'undefined' && require.main === module ) {
-		var wb = readFile(process.argv[2] || 'Book1.xls');
-		var target_sheet = process.argv[3] || '';
-		if(target_sheet === '') target_sheet = wb.Directory[0];
-		var ws = wb.Sheets[target_sheet];
-		console.log(target_sheet);
-		console.log(make_csv(ws));
-		//console.log(get_formulae(ws));
+	var wb = readFile(process.argv[2] || 'Book1.xls');
+	var target_sheet = process.argv[3] || '';
+	if(target_sheet === '') target_sheet = wb.Directory[0];
+	var ws = wb.Sheets[target_sheet];
+	console.log(target_sheet);
+	console.log(make_csv(ws));
+	//console.log(get_formulae(ws));
 }
 })(typeof exports !== 'undefined' ? exports : XLS);
