@@ -906,17 +906,9 @@ function read_directory(idx) {
 		o.mtime = read(8);
 		o.start = read(4);
 		o.size = read(4);
-    console.log( o.type );
 		if(o.type === 'root') { //root entry
 			minifat_store = o.start;
-			if(nmfs > 0){
-        var item = sector_list[minifat_store];
-        if (!item) {
-          item = sector_list.filter(function(d) {return d && !d.name && d.nodes.length === 8;})[0];
-        } else {
-          item.name = "!StreamData";
-        }
-      }
+			if(nmfs > 0) sector_list[minifat_store].name = "!StreamData";
 			minifat_size = o.size;
 		} else if(o.size >= ms_cutoff_size) {
 			o.storage = 'fat';
@@ -2504,13 +2496,15 @@ function stringify_formula(formula, range, cell, supbooks) {
 				type = f[1][0], r = shift_range(f[1][1], range);
 				stack.push(encode_range(r));
 				break;
-			case 'PtgAreaN': break;
-
 			/* 2.5.198.28 */
 			case 'PtgArea3d': // TODO: lots of stuff
 				type = f[1][0], ixti = f[1][1], r = f[1][2];
 				stack.push(supbooks[1][ixti+1]+"!"+encode_range(r));
 				break;
+
+      /* 2.5.198.31 */
+      case 'PtgAreaN': break;
+
 			/* 2.5.198.41 */
 			case 'PtgAttrSum':
 				stack.push("SUM(" + stack.pop() + ")");
