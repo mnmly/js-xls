@@ -1,0 +1,7 @@
+{
+  "name": "component-xls",
+  "scripts": [
+    "xls.js"
+  ],
+  "main": "xls.js"
+}
