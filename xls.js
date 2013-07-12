@@ -987,7 +987,7 @@ return exports;
 	var EntryTypes = ['unknown','storage','stream',null,null,'root'];
 }
 
-if(typeof require !== 'undefined' && typeof exports !== 'undefined') {
+if(typeof require !== 'undefined' && typeof exports !== 'undefined' && typeof window === 'undefined') {
 	Buffers = Array;
 	Buffers.prototype.toBuffer = function() {
 		return Buffer.concat(this[0]);
