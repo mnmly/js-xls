@@ -250,6 +250,10 @@ function stringify_formula(formula, range, cell, supbooks) {
 				type = f[1][0], ixti = f[1][1], r = f[1][2];
 				stack.push(supbooks[1][ixti+1]+"!"+encode_range(r));
 				break;
+
+      /* 2.5.198.31 */
+			case 'PtgAreaN': break;
+
 			/* 2.5.198.41 */
 			case 'PtgAttrSum':
 				stack.push("SUM(" + stack.pop() + ")");
